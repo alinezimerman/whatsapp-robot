@@ -78,10 +78,11 @@ function startPolling() {
       console.log('🔍 Checking messages...');
 
       const { data: messages, error } = await supabase
-        .from('Messages')
-        .select('*')
-        .eq('status', 'scheduled')
-        .lte('scheduled_time', new Date().toISOString());
+        const { data, error } = await supabase
+  	.from('messages')
+ 	 .select('*');
+
+	console.log('📦 EVERYTHING:', data);
 
       if (error) {
         console.log('❌ Supabase error:', error.message);
