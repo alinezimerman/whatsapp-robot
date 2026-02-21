@@ -1,82 +1,121 @@
+// =============================
+// 📦 IMPORTS
+// =============================
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
 
-// 🔐 SUPABASE
+// =============================
+// 🔑 SUPABASE CONFIG
+// =============================
 const supabase = createClient(
-  'https://bxrimrpkbizyqcxcfssy.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4cmltcnBrYml6eXFjeGNmc3N5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDQwNjg0MCwiZXhwIjoyMDg1OTgyODQwfQ.5q-n9n2PwTtUE9i8kJm0WF2Tdp4fpSsbpmylMMH872E'
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
 );
 
-// 🤖 WhatsApp client
+// =============================
+// 🤖 WHATSAPP CLIENT (Railway safe)
+// =============================
 const client = new Client({
-  authStrategy: new LocalAuth(),
+  authStrategy: new LocalAuth({
+    dataPath: './session' // persists login
+  }),
   puppeteer: {
     headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, // Railway Chrome fix
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding'
+      '--disable-gpu'
     ]
   }
 });
 
-// QR
+// =============================
+// 📱 QR CODE
+// =============================
 client.on('qr', qr => {
-  console.log('📱 Scan QR');
+  console.log('📱 Scan this QR with WhatsApp');
   qrcode.generate(qr, { small: true });
 });
 
-// READY
+// =============================
+// ✅ READY EVENT
+// =============================
 client.on('ready', () => {
-  console.log('🤖 WhatsApp READY');
+  console.log('🤖 WhatsApp is READY');
   startPolling();
 });
 
-// POLLING
-function startPolling() {
-  setInterval(async () => {
-    console.log('🔍 Checking messages...');
+// =============================
+// 📤 SEND FUNCTION
+// =============================
+async function sendWhatsApp(phone, text) {
+  try {
+    // Clean phone
+    const clean = phone.replace(/\D/g, '');
+    const chatId = `${clean}@c.us`;
 
-    const { data: messages } = await supabase
-      .from('Messages')
-      .select('*')
-      .eq('status', 'scheduled')
-      .limit(5);
+    console.log(`📤 Sending to: ${chatId}`);
 
-    if (!messages || messages.length === 0) {
-      console.log('📭 No messages');
-      return;
-    }
+    await client.sendMessage(chatId, text);
 
-    for (const msg of messages) {
-      try {
-        const clean = msg.phone.replace(/\D/g, '');
-        const chatId = `${clean}@c.us`;
-
-        console.log('📤 Sending to:', chatId);
-
-        const chat = await client.getChatById(chatId);
-        await chat.sendMessage(msg.text);
-
-        console.log('✅ Sent');
-
-        await supabase
-          .from('Messages')
-          .update({
-            status: 'sent',
-            sent_at: new Date().toISOString()
-          })
-          .eq('id', msg.id);
-
-      } catch (err) {
-        console.log('❌ Error:', err.message);
-      }
-    }
-  }, 5000);
+    console.log('✅ Sent successfully');
+    return true;
+  } catch (err) {
+    console.log('❌ Send error:', err.message);
+    return false;
+  }
 }
 
+// =============================
+// 🔁 POLLING LOOP
+// =============================
+function startPolling() {
+  setInterval(async () => {
+    try {
+      console.log('🔍 Checking messages...');
+
+      const { data: messages, error } = await supabase
+        .from('Messages')
+        .select('*')
+        .eq('status', 'scheduled')
+        .lte('scheduled_time', new Date().toISOString());
+
+      if (error) {
+        console.log('❌ Supabase error:', error.message);
+        return;
+      }
+
+      if (!messages || messages.length === 0) {
+        console.log('📭 No messages');
+        return;
+      }
+
+      console.log(`📦 Found ${messages.length} message(s)`);
+
+      for (const msg of messages) {
+        const success = await sendWhatsApp(msg.phone, msg.text);
+
+        if (success) {
+          await supabase
+            .from('Messages')
+            .update({
+              status: 'sent',
+              sent_at: new Date().toISOString()
+            })
+            .eq('id', msg.id);
+        }
+      }
+
+    } catch (err) {
+      console.log('💥 Polling error:', err.message);
+    }
+  }, 5000); // check every 5s
+}
+
+// =============================
+// 🚀 START
+// =============================
 client.initialize();
