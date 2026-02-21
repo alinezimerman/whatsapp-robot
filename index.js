@@ -32,7 +32,7 @@ client.on('ready', async () => {
 
   try {
     const { data, error } = await supabase
-      .from('messages')
+      .from('Messages')
       .select('*')
       .limit(5);
 
